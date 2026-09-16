@@ -99,7 +99,9 @@ $$\frac{\partial L}{\partial A} = \frac{\partial L}{\partial C}\,B^{T} \qquad\qq
 
 ### Elementwise addition: $C = A + B$
 
-$$\frac{\partial L}{\partial A} = \frac{\partial L}{\partial C}\times \texttt{np.ones\_like(self.data)}$$
+$$\frac{\partial L}{\partial A} = \frac{\partial L}{\partial C}\times \mathbf{1}$$
+
+where $\mathbf{1}$ is a matrix of ones the same shape as `self.data` — implemented as `np.ones_like(self.data)`.
 
 *(a matrix of the same shape as `self.data`, `out.data`, `other.data`)*
 
