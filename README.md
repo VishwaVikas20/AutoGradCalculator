@@ -4,9 +4,9 @@ A from-scratch autograd engine — no `torch`, no `tensorflow`. Implements rever
 
 ## Core Objective
 
-Given a scalar loss $L$, compute:
+Given a scalar loss $L$, compute
 
-$$\left\{ \frac{\partial L}{\partial w_i} : i \in N \right\}$$
+$$\frac{\partial L}{\partial w_i} \quad \text{for all } i \in N$$
 
 for every parameter $w_i$ in the graph.
 
@@ -28,7 +28,7 @@ Everything is built on a `Value` (scalar) / `Tensor` (array) object with four at
 
 ## Forward Pass
 
-Standard operators (`--add--`, `--mul--`, `--sub--`, `--truediv--`, `--pow--`, `--neg--`) each build a node and record how to backprop through themselves:
+Standard operators (`__add__`, `__mul__`, `__sub__`, `__truediv__`, `__pow__`, `__neg__`) each build a node and record how to backprop through themselves:
 
 ```python
 c = a * b
@@ -45,74 +45,111 @@ c.data = a.data * b.data
 
 Gradients flow backward through the graph via **topological sort**, applying the chain rule at each node:
 
-$$\frac{\partial L}{\partial a} = \frac{\partial L}{\partial d}\cdot\frac{\partial d}{\partial c}\cdot\frac{\partial c}{\partial a} = \frac{\partial L}{\partial c}\cdot\frac{\partial c}{\partial a}$$
+$$\frac{\partial L}{\partial a} = \frac{\partial L}{\partial d} \cdot \frac{\partial d}{\partial c} \cdot \frac{\partial c}{\partial a}$$
 
 ---
 
 ## `Value` (scalar) — Operator Derivations
 
-### Addition: $c = a + b$
+### Addition
 
-$$\text{self.grad} \;+\!= \text{out.grad}$$
-$$\text{other.grad} \;+\!= \text{out.grad}$$
+$$c = a + b \qquad \frac{\partial c}{\partial a} = 1, \quad \frac{\partial c}{\partial b} = 1$$
 
-### Multiplication: $c = a \times b$
+```python
+self.grad  += out.grad
+other.grad += out.grad
+```
 
-$$\text{self.grad} \;+\!= \text{out.grad} \times \text{other.data}$$
-$$\text{other.grad} \;+\!= \text{out.grad} \times \text{self.data}$$
+### Multiplication
 
-### Subtraction: $c = a - b$
+$$c = a \times b \qquad \frac{\partial c}{\partial a} = b, \quad \frac{\partial c}{\partial b} = a$$
 
-$$\frac{\partial L}{\partial a} = \frac{\partial L}{\partial c}\times 1 \qquad\qquad \frac{\partial L}{\partial b} = \frac{\partial L}{\partial c}\times(-1)$$
+```python
+self.grad  += out.grad * other.data
+other.grad += out.grad * self.data
+```
 
-### Power: $c = a^{n}$
+### Subtraction
 
-$$\frac{\partial L}{\partial a} = (\text{out.grad})\,(n\,a^{\,n-1})$$
-$$\text{self.grad} \;+\!= n\,(\text{out.grad})\,(\text{self.data}^{\,n-1})$$
+$$c = a - b \qquad \frac{\partial c}{\partial a} = 1, \quad \frac{\partial c}{\partial b} = -1$$
+
+```python
+self.grad  += out.grad
+other.grad += out.grad * (-1)
+```
+
+### Power
+
+$$c = a^{n} \qquad \frac{\partial c}{\partial a} = n \cdot a^{n-1}$$
+
+```python
+self.grad += n * out.grad * (self.data ** (n - 1))
+```
 
 ### Also implemented
-- Negation: `--neg--(self)`
-- Division: `--truediv--(self, other)`
-- Power: `--pow--(self, other)`
 
-### Activation — tanh: $c = \tanh(a)$
+- Negation — `__neg__(self)`
+- Division — `__truediv__(self, other)`
+- Power — `__pow__(self, other)`
 
-$$\tanh(x) = \frac{e^{x}-e^{-x}}{e^{x}+e^{-x}} \qquad\qquad \frac{d}{dx}\tanh(x) = 1-\tanh^2(x)$$
+### Activation — tanh
 
-$$\text{self.grad} \;+\!= (\text{out.grad})\times\left(1-(\text{out.data})^{2}\right)$$
+$$\tanh(x) = \frac{e^{x} - e^{-x}}{e^{x} + e^{-x}} \qquad \frac{d}{dx}\tanh(x) = 1 - \tanh^{2}(x)$$
 
-### Activation — ReLU: $c = \max(0, a)$
+```python
+self.grad += out.grad * (1 - out.data ** 2)
+```
 
-$$\text{local derivative} = \begin{cases} 1 & x > 0 \\ 0 & x \le 0 \end{cases}$$
+### Activation — ReLU
 
-$$\text{self.grad} \;+\!= (\text{out.grad}) \times (\text{self.data} > 0)$$
+$$c = \max(0, a) \qquad \frac{\partial c}{\partial a} = \begin{cases} 1 & a > 0 \\ 0 & a \le 0 \end{cases}$$
 
-*(boolean treated as 1 if `True`, 0 if `False`)*
+```python
+self.grad += out.grad * (self.data > 0)
+```
+
+The boolean acts as 1 when `True` and 0 when `False`.
 
 ---
 
 ## `Tensor` (matrix) — Operator Derivations
 
-### Matrix multiplication: $C = A \cdot B$
+### Matrix multiplication
 
-$$\frac{\partial L}{\partial A} = \frac{\partial L}{\partial C}\,B^{T} \qquad\qquad \frac{\partial L}{\partial B} = A^{T}\,\frac{\partial L}{\partial C}$$
+$$C = A B \qquad \frac{\partial L}{\partial A} = \frac{\partial L}{\partial C} B^{T}, \quad \frac{\partial L}{\partial B} = A^{T} \frac{\partial L}{\partial C}$$
 
-### Elementwise addition: $C = A + B$
+```python
+self.grad  += out.grad @ other.data.T
+other.grad += self.data.T @ out.grad
+```
 
-$$\frac{\partial L}{\partial A} = \frac{\partial L}{\partial C}\times \mathbf{1}$$
+### Elementwise addition
 
-where $\mathbf{1}$ is a matrix of ones the same shape as `self.data` — implemented as `np.ones_like(self.data)`.
+$$C = A + B \qquad \frac{\partial L}{\partial A} = \frac{\partial L}{\partial C}$$
 
-*(a matrix of the same shape as `self.data`, `out.data`, `other.data`)*
+The local derivative is a matrix of ones with the same shape as the input:
+
+```python
+self.grad += out.grad * np.ones_like(self.data)
+```
 
 ### ⚠️ Known Issue — Broadcasting
 
-If a 1×3 bias row is added to a 3×3 matrix, NumPy automatically copies that bias row three times so the shapes match. In the backward pass, this stretching has to be detected and the gradients **summed back up** so they match the original shape (1×3).
+If a 1×3 bias row is added to a 3×3 matrix, NumPy automatically copies that bias row three times so the shapes match. In the backward pass, this stretching has to be detected and the gradients **summed back up** so they match the original 1×3 shape.
 
 **Status:**
-- [x] `mul` — done
-- [ ] `sub`
-- [ ] `add` — still doesn't handle broadcasting
+
+- [x] `__mul__`
+- [ ] `__sub__`
+- [ ] `__add__` — still doesn't handle broadcasting
+
+---
+
+## Next steps
+
+- Handle broadcasting correctly in `__add__` and `__sub__` backward passes
+- Complete the `Tensor` division and power operators
+- Add gradient-checking tests against finite differences
 
 ---
 
